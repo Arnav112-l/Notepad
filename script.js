@@ -59,49 +59,75 @@ async function checkServer() {
 // Initialize Socket.IO for collaboration
 function initializeSocket() {
     if (typeof io !== 'undefined') {
-        socket = io();
-        
-        socket.on('connect', () => {
-            console.log('🔗 Connected to collaboration server');
+        try {
+            socket = io({
+                transports: ['websocket', 'polling'],
+                reconnection: true,
+                reconnectionDelay: 1000,
+                reconnectionAttempts: 5
+            });
             
-            // If we detected a collaborative session before socket was ready, join now
-            if (currentSessionId && !isCollaborating) {
-                joinCollaborativeSession(currentSessionId);
-            }
-        });
-        
-        socket.on('load-content', ({ title, content }) => {
-            isReceivingUpdate = true;
-            docTitle.value = title;
-            textArea.value = content;
-            updateCounts();
-            isReceivingUpdate = false;
-        });
-        
-        socket.on('content-update', ({ content, userId }) => {
-            if (!isReceivingUpdate) {
+            socket.on('connect', () => {
+                console.log('🔗 Connected to collaboration server');
+                
+                // If we detected a collaborative session before socket was ready, join now
+                if (currentSessionId && !isCollaborating) {
+                    joinCollaborativeSession(currentSessionId);
+                } else if (currentSessionId && isCollaborating) {
+                    // Rejoin if we got disconnected and reconnected
+                    socket.emit('join-session', currentSessionId);
+                    console.log('🔄 Rejoined collaborative session');
+                }
+            });
+            
+            socket.on('disconnect', () => {
+                console.log('❌ Disconnected from collaboration server');
+                if (isCollaborating) {
+                    saveText.textContent = 'Reconnecting...';
+                }
+            });
+            
+            socket.on('connect_error', (error) => {
+                console.error('Socket connection error:', error);
+            });
+            
+            socket.on('load-content', ({ title, content }) => {
                 isReceivingUpdate = true;
-                const cursorPos = textArea.selectionStart;
+                docTitle.value = title;
                 textArea.value = content;
-                textArea.selectionStart = textArea.selectionEnd = cursorPos;
                 updateCounts();
                 isReceivingUpdate = false;
-            }
-        });
-        
-        socket.on('title-update', ({ title }) => {
-            isReceivingUpdate = true;
-            docTitle.value = title;
-            isReceivingUpdate = false;
-        });
-        
-        socket.on('user-joined', ({ activeUsers }) => {
-            activeUsersSpan.textContent = `${activeUsers} ${activeUsers === 1 ? 'user' : 'users'}`;
-        });
-        
-        socket.on('user-left', ({ activeUsers }) => {
-            activeUsersSpan.textContent = `${activeUsers} ${activeUsers === 1 ? 'user' : 'users'}`;
-        });
+            });
+            
+            socket.on('content-update', ({ content, userId }) => {
+                if (!isReceivingUpdate) {
+                    isReceivingUpdate = true;
+                    const cursorPos = textArea.selectionStart;
+                    textArea.value = content;
+                    textArea.selectionStart = textArea.selectionEnd = cursorPos;
+                    updateCounts();
+                    isReceivingUpdate = false;
+                }
+            });
+            
+            socket.on('title-update', ({ title }) => {
+                isReceivingUpdate = true;
+                docTitle.value = title;
+                isReceivingUpdate = false;
+            });
+            
+            socket.on('user-joined', ({ activeUsers }) => {
+                activeUsersSpan.textContent = `${activeUsers} ${activeUsers === 1 ? 'user' : 'users'}`;
+            });
+            
+            socket.on('user-left', ({ activeUsers }) => {
+                activeUsersSpan.textContent = `${activeUsers} ${activeUsers === 1 ? 'user' : 'users'}`;
+            });
+        } catch (error) {
+            console.error('Failed to initialize Socket.io:', error);
+        }
+    } else {
+        console.warn('Socket.io not loaded. Collaboration features disabled.');
     }
 }
 
@@ -121,19 +147,36 @@ function checkCollaborativeSession() {
 // Join collaborative session
 async function joinCollaborativeSession(sessionId) {
     try {
+        console.log('Attempting to join session:', sessionId);
         const response = await fetch(`/api/collaborate/${sessionId}`);
         const data = await response.json();
         
         if (data.success) {
             isCollaborating = true;
             currentSessionId = sessionId;
-            socket.emit('join-session', sessionId);
+            
+            if (socket && socket.connected) {
+                socket.emit('join-session', sessionId);
+                console.log('✅ Joined collaborative session');
+            } else {
+                console.warn('Socket not connected yet, will join when ready');
+            }
+            
             collabStatus.style.display = 'flex';
             activeUsersSpan.textContent = `${data.session.activeUsers} ${data.session.activeUsers === 1 ? 'user' : 'users'}`;
             saveText.textContent = 'Collaborating';
+            
+            // Load initial content
+            docTitle.value = data.session.title;
+            textArea.value = data.session.content;
+            updateCounts();
+        } else {
+            console.error('Session not found');
+            alert('This collaborative session does not exist or has expired.');
         }
     } catch (error) {
         console.error('Failed to join session:', error);
+        alert('Failed to connect to collaborative session. Please check your connection.');
     }
 }
 
