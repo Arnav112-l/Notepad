@@ -21,26 +21,15 @@ const PORT = process.env.PORT || 3000;
 // Store active collaborative sessions
 const collaborativeSessions = new Map();
 
-// Middleware
-app.use(cors());
-app.use(bodyParser.json({ limit: '50mb' }));
-
 // Ensure documents directory exists
 const DOCS_DIR = path.join(__dirname, 'documents');
 fs.mkdir(DOCS_DIR, { recursive: true }).catch(console.error);
 
-// Serve static files (CSS, JS, etc.) - must be before API routes
-app.use(express.static(__dirname, {
-    index: false, // Don't serve index.html automatically
-    setHeaders: (res, path) => {
-        if (path.endsWith('.js')) {
-            res.setHeader('Content-Type', 'application/javascript');
-        } else if (path.endsWith('.css')) {
-            res.setHeader('Content-Type', 'text/css');
-        }
-    }
-}));
+// Middleware
+app.use(cors());
+app.use(bodyParser.json({ limit: '50mb' }));
 
+// API Routes first (before static files and wildcard)
 // Save document
 app.post('/api/save', async (req, res) => {
     try {
@@ -262,12 +251,20 @@ io.on('connection', (socket) => {
     });
 });
 
-// Serve index.html for all other routes (except static files)
-app.get('*', (req, res, next) => {
-    // Don't serve HTML for static file requests
-    if (req.path.match(/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)$/)) {
-        return next();
+// Serve static files (JS, CSS, images, etc.)
+app.use(express.static(__dirname, {
+    index: false,
+    setHeaders: (res, filepath) => {
+        if (filepath.endsWith('.js')) {
+            res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+        } else if (filepath.endsWith('.css')) {
+            res.setHeader('Content-Type', 'text/css; charset=utf-8');
+        }
     }
+}));
+
+// Serve index.html for all other routes (SPA fallback)
+app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
