@@ -63,6 +63,11 @@ function initializeSocket() {
         
         socket.on('connect', () => {
             console.log('🔗 Connected to collaboration server');
+            
+            // If we detected a collaborative session before socket was ready, join now
+            if (currentSessionId && !isCollaborating) {
+                joinCollaborativeSession(currentSessionId);
+            }
         });
         
         socket.on('load-content', ({ title, content }) => {
@@ -105,10 +110,12 @@ function checkCollaborativeSession() {
     const path = window.location.pathname;
     const match = path.match(/\/collaborate\/([a-f0-9-]+)/);
     
-    if (match && socket) {
+    if (match) {
         currentSessionId = match[1];
-        joinCollaborativeSession(currentSessionId);
+        // Socket will handle joining when it connects
+        return true;
     }
+    return false;
 }
 
 // Join collaborative session
@@ -262,11 +269,17 @@ window.addEventListener('load', async () => {
     await checkServer();
     
     // Check if accessing collaborative session
-    checkCollaborativeSession();
+    const isCollab = checkCollaborativeSession();
     
-    // Initialize tabs
-    if (!isCollaborating) {
+    // Initialize tabs only if not in collaborative mode
+    if (!isCollab) {
         initializeTabs();
+    } else {
+        // Hide tabs in collaborative mode
+        const tabsContainer = document.querySelector('.tabs-container');
+        if (tabsContainer) {
+            tabsContainer.style.display = 'none';
+        }
     }
     
     const savedFontSize = localStorage.getItem('notepadFontSize');
