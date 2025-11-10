@@ -12,6 +12,8 @@ const copyBtn = document.getElementById('copyBtn');
 const fontSize = document.getElementById('fontSize');
 const fontFamily = document.getElementById('fontFamily');
 const themeToggle = document.getElementById('themeToggle');
+const tabsWrapper = document.getElementById('tabsWrapper');
+const addTabBtn = document.getElementById('addTabBtn');
 
 // Auto-save timer
 let autoSaveTimer = null;
@@ -19,6 +21,11 @@ let autoSaveTimer = null;
 // Check if server is available
 let serverAvailable = false;
 let currentDocName = 'untitled';
+
+// Tabs management
+let tabs = [];
+let activeTabId = 1;
+let nextTabId = 2;
 
 // Check server connectivity
 async function checkServer() {
@@ -35,26 +42,143 @@ async function checkServer() {
     return serverAvailable;
 }
 
+// Initialize tabs
+function initializeTabs() {
+    tabs = [{
+        id: 1,
+        title: 'Untitled Document',
+        content: '',
+        docName: 'untitled'
+    }];
+    
+    // Load saved tabs
+    const savedTabs = localStorage.getItem('notepadTabs');
+    const savedActiveId = localStorage.getItem('notepadActiveTabId');
+    
+    if (savedTabs) {
+        tabs = JSON.parse(savedTabs);
+        activeTabId = savedActiveId ? parseInt(savedActiveId) : tabs[0].id;
+        nextTabId = Math.max(...tabs.map(t => t.id)) + 1;
+        renderTabs();
+        switchToTab(activeTabId);
+    } else {
+        renderTabs();
+    }
+}
+
+// Render tabs
+function renderTabs() {
+    tabsWrapper.innerHTML = '';
+    
+    tabs.forEach(tab => {
+        const tabElement = document.createElement('div');
+        tabElement.className = `tab ${tab.id === activeTabId ? 'active' : ''}`;
+        tabElement.dataset.tabId = tab.id;
+        
+        tabElement.innerHTML = `
+            <span class="tab-title">${tab.title}</span>
+            <button class="tab-close" title="Close tab">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        `;
+        
+        // Tab click handler
+        tabElement.addEventListener('click', (e) => {
+            if (!e.target.closest('.tab-close')) {
+                switchToTab(tab.id);
+            }
+        });
+        
+        // Close button handler
+        tabElement.querySelector('.tab-close').addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeTab(tab.id);
+        });
+        
+        tabsWrapper.appendChild(tabElement);
+    });
+}
+
+// Switch to tab
+function switchToTab(tabId) {
+    // Save current tab content
+    const currentTab = tabs.find(t => t.id === activeTabId);
+    if (currentTab) {
+        currentTab.content = textArea.value;
+        currentTab.title = docTitle.value;
+        currentTab.docName = currentDocName;
+    }
+    
+    // Switch to new tab
+    activeTabId = tabId;
+    const tab = tabs.find(t => t.id === tabId);
+    
+    if (tab) {
+        textArea.value = tab.content;
+        docTitle.value = tab.title;
+        currentDocName = tab.docName;
+        updateCounts();
+        renderTabs();
+        saveTabs();
+    }
+}
+
+// Add new tab
+function addTab() {
+    const newTab = {
+        id: nextTabId++,
+        title: 'Untitled Document',
+        content: '',
+        docName: 'untitled_' + Date.now()
+    };
+    
+    tabs.push(newTab);
+    switchToTab(newTab.id);
+}
+
+// Close tab
+function closeTab(tabId) {
+    if (tabs.length === 1) {
+        alert('Cannot close the last tab!');
+        return;
+    }
+    
+    const tabIndex = tabs.findIndex(t => t.id === tabId);
+    
+    if (tabIndex === -1) return;
+    
+    tabs.splice(tabIndex, 1);
+    
+    // Switch to adjacent tab
+    if (tabId === activeTabId) {
+        const newActiveTab = tabs[Math.min(tabIndex, tabs.length - 1)];
+        switchToTab(newActiveTab.id);
+    } else {
+        renderTabs();
+        saveTabs();
+    }
+}
+
+// Save tabs to localStorage
+function saveTabs() {
+    localStorage.setItem('notepadTabs', JSON.stringify(tabs));
+    localStorage.setItem('notepadActiveTabId', activeTabId.toString());
+}
+
 // Load saved content from localStorage
 window.addEventListener('load', async () => {
     // Check server availability
     await checkServer();
     
-    const savedText = localStorage.getItem('notepadText');
-    const savedDocTitle = localStorage.getItem('notepadDocTitle');
+    // Initialize tabs
+    initializeTabs();
+    
     const savedFontSize = localStorage.getItem('notepadFontSize');
     const savedFontFamily = localStorage.getItem('notepadFontFamily');
     const savedTheme = localStorage.getItem('notepadTheme');
-    
-    if (savedText) {
-        textArea.value = savedText;
-        updateCounts();
-    }
-    
-    if (savedDocTitle) {
-        docTitle.value = savedDocTitle;
-        currentDocName = savedDocTitle.toLowerCase().replace(/\s+/g, '_');
-    }
     
     if (savedFontSize) {
         fontSize.value = savedFontSize;
@@ -161,6 +285,14 @@ async function autoSave() {
 // Event listener for text changes
 textArea.addEventListener('input', () => {
     updateCounts();
+    
+    // Update current tab content
+    const currentTab = tabs.find(t => t.id === activeTabId);
+    if (currentTab) {
+        currentTab.content = textArea.value;
+        saveTabs();
+    }
+    
     autoSave();
 });
 
@@ -168,31 +300,29 @@ textArea.addEventListener('input', () => {
 docTitle.addEventListener('input', () => {
     const title = docTitle.value.trim() || 'Untitled Document';
     currentDocName = title.toLowerCase().replace(/\s+/g, '_');
-    localStorage.setItem('notepadDocTitle', docTitle.value);
+    
+    // Update current tab title
+    const currentTab = tabs.find(t => t.id === activeTabId);
+    if (currentTab) {
+        currentTab.title = docTitle.value;
+        currentTab.docName = currentDocName;
+        renderTabs();
+        saveTabs();
+    }
+    
     autoSave();
 });
 
-// New document
+// Add tab button
+addTabBtn.addEventListener('click', () => {
+    addTab();
+    showSuccess(addTabBtn);
+});
+
+// New document (adds new tab)
 newBtn.addEventListener('click', () => {
-    if (textArea.value.trim() !== '') {
-        if (confirm('Create a new document? Current text will be cleared.')) {
-            textArea.value = '';
-            docTitle.value = 'Untitled Document';
-            currentDocName = 'untitled';
-            updateCounts();
-            localStorage.removeItem('notepadText');
-            localStorage.removeItem('notepadDocTitle');
-            localStorage.removeItem('notepadLastSaved');
-            saveText.textContent = 'Auto-save enabled';
-            showSuccess(newBtn);
-        }
-    } else {
-        textArea.value = '';
-        docTitle.value = 'Untitled Document';
-        currentDocName = 'untitled';
-        updateCounts();
-        showSuccess(newBtn);
-    }
+    addTab();
+    showSuccess(newBtn);
 });
 
 // Save as text file
@@ -300,6 +430,18 @@ document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.shiftKey && e.key === 'C') {
         e.preventDefault();
         copyBtn.click();
+    }
+    
+    // Ctrl+T to new tab
+    if (e.ctrlKey && e.key === 't') {
+        e.preventDefault();
+        addTab();
+    }
+    
+    // Ctrl+W to close tab
+    if (e.ctrlKey && e.key === 'w') {
+        e.preventDefault();
+        closeTab(activeTabId);
     }
 });
 

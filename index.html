@@ -86,6 +86,27 @@
 
         <!-- Main Content -->
         <main class="main-content">
+            <!-- Tabs Section -->
+            <div class="tabs-container">
+                <div class="tabs-wrapper" id="tabsWrapper">
+                    <div class="tab active" data-tab-id="1">
+                        <span class="tab-title">Untitled Document</span>
+                        <button class="tab-close" title="Close tab">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <button class="add-tab-btn" id="addTabBtn" title="New Tab (Ctrl+T)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"/>
+                        <line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                </button>
+            </div>
+
             <div class="editor-header">
                 <div class="document-info">
                     <input type="text" id="docTitle" class="document-title-input" value="Untitled Document" placeholder="Document Name">
