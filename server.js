@@ -24,11 +24,22 @@ const collaborativeSessions = new Map();
 // Middleware
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
-app.use(express.static(__dirname));
 
 // Ensure documents directory exists
 const DOCS_DIR = path.join(__dirname, 'documents');
 fs.mkdir(DOCS_DIR, { recursive: true }).catch(console.error);
+
+// Serve static files (CSS, JS, etc.) - must be before API routes
+app.use(express.static(__dirname, {
+    index: false, // Don't serve index.html automatically
+    setHeaders: (res, path) => {
+        if (path.endsWith('.js')) {
+            res.setHeader('Content-Type', 'application/javascript');
+        } else if (path.endsWith('.css')) {
+            res.setHeader('Content-Type', 'text/css');
+        }
+    }
+}));
 
 // Save document
 app.post('/api/save', async (req, res) => {
@@ -251,8 +262,12 @@ io.on('connection', (socket) => {
     });
 });
 
-// Serve index.html for all other routes
-app.get('*', (req, res) => {
+// Serve index.html for all other routes (except static files)
+app.get('*', (req, res, next) => {
+    // Don't serve HTML for static file requests
+    if (req.path.match(/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)$/)) {
+        return next();
+    }
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
