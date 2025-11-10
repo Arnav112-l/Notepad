@@ -5,15 +5,22 @@ const charCount = document.getElementById('charCount');
 const wordCount = document.getElementById('wordCount');
 const lastSaved = document.getElementById('lastSaved');
 const saveText = document.getElementById('saveText');
+const collabStatus = document.getElementById('collabStatus');
+const activeUsersSpan = document.getElementById('activeUsers');
 const newBtn = document.getElementById('newBtn');
 const saveBtn = document.getElementById('saveBtn');
 const clearBtn = document.getElementById('clearBtn');
 const copyBtn = document.getElementById('copyBtn');
+const shareBtn = document.getElementById('shareBtn');
 const fontSize = document.getElementById('fontSize');
 const fontFamily = document.getElementById('fontFamily');
 const themeToggle = document.getElementById('themeToggle');
 const tabsWrapper = document.getElementById('tabsWrapper');
 const addTabBtn = document.getElementById('addTabBtn');
+const shareModal = document.getElementById('shareModal');
+const closeModal = document.getElementById('closeModal');
+const shareLinkInput = document.getElementById('shareLinkInput');
+const copyLinkBtn = document.getElementById('copyLinkBtn');
 
 // Auto-save timer
 let autoSaveTimer = null;
@@ -27,6 +34,12 @@ let tabs = [];
 let activeTabId = 1;
 let nextTabId = 2;
 
+// Collaboration
+let socket = null;
+let isCollaborating = false;
+let currentSessionId = null;
+let isReceivingUpdate = false;
+
 // Check server connectivity
 async function checkServer() {
     try {
@@ -34,12 +47,87 @@ async function checkServer() {
         serverAvailable = response.ok;
         if (serverAvailable) {
             console.log('✅ Server auto-save enabled');
+            initializeSocket();
         }
     } catch (error) {
         serverAvailable = false;
         console.log('📱 Using local storage (server not available)');
     }
     return serverAvailable;
+}
+
+// Initialize Socket.IO for collaboration
+function initializeSocket() {
+    if (typeof io !== 'undefined') {
+        socket = io();
+        
+        socket.on('connect', () => {
+            console.log('🔗 Connected to collaboration server');
+        });
+        
+        socket.on('load-content', ({ title, content }) => {
+            isReceivingUpdate = true;
+            docTitle.value = title;
+            textArea.value = content;
+            updateCounts();
+            isReceivingUpdate = false;
+        });
+        
+        socket.on('content-update', ({ content, userId }) => {
+            if (!isReceivingUpdate) {
+                isReceivingUpdate = true;
+                const cursorPos = textArea.selectionStart;
+                textArea.value = content;
+                textArea.selectionStart = textArea.selectionEnd = cursorPos;
+                updateCounts();
+                isReceivingUpdate = false;
+            }
+        });
+        
+        socket.on('title-update', ({ title }) => {
+            isReceivingUpdate = true;
+            docTitle.value = title;
+            isReceivingUpdate = false;
+        });
+        
+        socket.on('user-joined', ({ activeUsers }) => {
+            activeUsersSpan.textContent = `${activeUsers} ${activeUsers === 1 ? 'user' : 'users'}`;
+        });
+        
+        socket.on('user-left', ({ activeUsers }) => {
+            activeUsersSpan.textContent = `${activeUsers} ${activeUsers === 1 ? 'user' : 'users'}`;
+        });
+    }
+}
+
+// Check if we're in a collaborative session (from URL)
+function checkCollaborativeSession() {
+    const path = window.location.pathname;
+    const match = path.match(/\/collaborate\/([a-f0-9-]+)/);
+    
+    if (match && socket) {
+        currentSessionId = match[1];
+        joinCollaborativeSession(currentSessionId);
+    }
+}
+
+// Join collaborative session
+async function joinCollaborativeSession(sessionId) {
+    try {
+        const response = await fetch(`/api/collaborate/${sessionId}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            isCollaborating = true;
+            currentSessionId = sessionId;
+            socket.emit('join-session', sessionId);
+            collabStatus.style.display = 'flex';
+            activeUsersSpan.textContent = `${data.session.activeUsers} ${data.session.activeUsers === 1 ? 'user' : 'users'}`;
+            saveText.textContent = 'Collaborating';
+        }
+    } catch (error) {
+        console.error('Failed to join session:', error);
+    }
 }
 
 // Initialize tabs
@@ -173,8 +261,13 @@ window.addEventListener('load', async () => {
     // Check server availability
     await checkServer();
     
+    // Check if accessing collaborative session
+    checkCollaborativeSession();
+    
     // Initialize tabs
-    initializeTabs();
+    if (!isCollaborating) {
+        initializeTabs();
+    }
     
     const savedFontSize = localStorage.getItem('notepadFontSize');
     const savedFontFamily = localStorage.getItem('notepadFontFamily');
@@ -286,11 +379,22 @@ async function autoSave() {
 textArea.addEventListener('input', () => {
     updateCounts();
     
+    // Send to collaborative session
+    if (isCollaborating && socket && !isReceivingUpdate) {
+        socket.emit('content-change', {
+            sessionId: currentSessionId,
+            content: textArea.value,
+            cursorPosition: textArea.selectionStart
+        });
+    }
+    
     // Update current tab content
-    const currentTab = tabs.find(t => t.id === activeTabId);
-    if (currentTab) {
-        currentTab.content = textArea.value;
-        saveTabs();
+    if (!isCollaborating) {
+        const currentTab = tabs.find(t => t.id === activeTabId);
+        if (currentTab) {
+            currentTab.content = textArea.value;
+            saveTabs();
+        }
     }
     
     autoSave();
@@ -301,13 +405,23 @@ docTitle.addEventListener('input', () => {
     const title = docTitle.value.trim() || 'Untitled Document';
     currentDocName = title.toLowerCase().replace(/\s+/g, '_');
     
+    // Send to collaborative session
+    if (isCollaborating && socket && !isReceivingUpdate) {
+        socket.emit('title-change', {
+            sessionId: currentSessionId,
+            title: docTitle.value
+        });
+    }
+    
     // Update current tab title
-    const currentTab = tabs.find(t => t.id === activeTabId);
-    if (currentTab) {
-        currentTab.title = docTitle.value;
-        currentTab.docName = currentDocName;
-        renderTabs();
-        saveTabs();
+    if (!isCollaborating) {
+        const currentTab = tabs.find(t => t.id === activeTabId);
+        if (currentTab) {
+            currentTab.title = docTitle.value;
+            currentTab.docName = currentDocName;
+            renderTabs();
+            saveTabs();
+        }
     }
     
     autoSave();
@@ -317,6 +431,61 @@ docTitle.addEventListener('input', () => {
 addTabBtn.addEventListener('click', () => {
     addTab();
     showSuccess(addTabBtn);
+});
+
+// Share button
+shareBtn.addEventListener('click', async () => {
+    if (!serverAvailable) {
+        alert('Collaboration requires a server connection. Please run the server with "npm start".');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/collaborate/create', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                title: docTitle.value,
+                content: textArea.value
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            shareLinkInput.value = data.shareUrl;
+            shareModal.style.display = 'flex';
+        }
+    } catch (error) {
+        console.error('Failed to create share link:', error);
+        alert('Failed to create share link');
+    }
+});
+
+// Close modal
+closeModal.addEventListener('click', () => {
+    shareModal.style.display = 'none';
+});
+
+shareModal.addEventListener('click', (e) => {
+    if (e.target === shareModal) {
+        shareModal.style.display = 'none';
+    }
+});
+
+// Copy share link
+copyLinkBtn.addEventListener('click', async () => {
+    try {
+        await navigator.clipboard.writeText(shareLinkInput.value);
+        copyLinkBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Copied!';
+        setTimeout(() => {
+            copyLinkBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy';
+        }, 2000);
+    } catch (error) {
+        alert('Failed to copy link');
+    }
 });
 
 // New document (adds new tab)

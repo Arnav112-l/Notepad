@@ -3,9 +3,23 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const fs = require('fs').promises;
 const path = require('path');
+const http = require('http');
+const { Server } = require('socket.io');
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
+
 const PORT = process.env.PORT || 3000;
+
+// Store active collaborative sessions
+const collaborativeSessions = new Map();
 
 // Middleware
 app.use(cors());
@@ -102,12 +116,148 @@ app.delete('/api/delete/:filename', async (req, res) => {
     }
 });
 
+// Create collaborative session
+app.post('/api/collaborate/create', (req, res) => {
+    const sessionId = uuidv4();
+    const { title, content } = req.body;
+    
+    collaborativeSessions.set(sessionId, {
+        id: sessionId,
+        title: title || 'Untitled Shared Document',
+        content: content || '',
+        users: [],
+        createdAt: new Date()
+    });
+    
+    res.json({ 
+        success: true, 
+        sessionId,
+        shareUrl: `${req.protocol}://${req.get('host')}/collaborate/${sessionId}`
+    });
+});
+
+// Get collaborative session
+app.get('/api/collaborate/:sessionId', (req, res) => {
+    const { sessionId } = req.params;
+    const session = collaborativeSessions.get(sessionId);
+    
+    if (session) {
+        res.json({ 
+            success: true, 
+            session: {
+                id: session.id,
+                title: session.title,
+                content: session.content,
+                activeUsers: session.users.length
+            }
+        });
+    } else {
+        res.status(404).json({ error: 'Session not found' });
+    }
+});
+
+// WebSocket connection for real-time collaboration
+io.on('connection', (socket) => {
+    console.log('User connected:', socket.id);
+    
+    // Join collaborative session
+    socket.on('join-session', (sessionId) => {
+        socket.join(sessionId);
+        
+        const session = collaborativeSessions.get(sessionId);
+        if (session) {
+            session.users.push(socket.id);
+            
+            // Send current content to new user
+            socket.emit('load-content', {
+                title: session.title,
+                content: session.content
+            });
+            
+            // Notify others about new user
+            socket.to(sessionId).emit('user-joined', {
+                userId: socket.id,
+                activeUsers: session.users.length
+            });
+            
+            console.log(`User ${socket.id} joined session ${sessionId}`);
+        }
+    });
+    
+    // Handle content changes
+    socket.on('content-change', ({ sessionId, content, cursorPosition }) => {
+        const session = collaborativeSessions.get(sessionId);
+        if (session) {
+            session.content = content;
+            
+            // Broadcast to all other users in the session
+            socket.to(sessionId).emit('content-update', {
+                content,
+                cursorPosition,
+                userId: socket.id
+            });
+        }
+    });
+    
+    // Handle title changes
+    socket.on('title-change', ({ sessionId, title }) => {
+        const session = collaborativeSessions.get(sessionId);
+        if (session) {
+            session.title = title;
+            
+            // Broadcast to all other users
+            socket.to(sessionId).emit('title-update', {
+                title,
+                userId: socket.id
+            });
+        }
+    });
+    
+    // Handle cursor position
+    socket.on('cursor-move', ({ sessionId, position }) => {
+        socket.to(sessionId).emit('cursor-update', {
+            userId: socket.id,
+            position
+        });
+    });
+    
+    // Handle disconnect
+    socket.on('disconnect', () => {
+        console.log('User disconnected:', socket.id);
+        
+        // Remove user from all sessions
+        collaborativeSessions.forEach((session, sessionId) => {
+            const index = session.users.indexOf(socket.id);
+            if (index > -1) {
+                session.users.splice(index, 1);
+                
+                // Notify others
+                socket.to(sessionId).emit('user-left', {
+                    userId: socket.id,
+                    activeUsers: session.users.length
+                });
+                
+                // Clean up empty sessions after 1 hour
+                if (session.users.length === 0) {
+                    setTimeout(() => {
+                        if (collaborativeSessions.get(sessionId)?.users.length === 0) {
+                            collaborativeSessions.delete(sessionId);
+                            console.log(`Session ${sessionId} cleaned up`);
+                        }
+                    }, 3600000);
+                }
+            }
+        });
+    });
+});
+
 // Serve index.html for all other routes
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`✨ Notepad server running on http://localhost:${PORT}`);
     console.log(`📁 Documents saved in: ${DOCS_DIR}`);
+    console.log(`🔗 Real-time collaboration enabled!`);
 });
